@@ -20,13 +20,20 @@ function render(){
  $('signout').disabled=busy; $('pause').hidden=!flow.running;
  $('understood').disabled=busy; $('confirm').disabled=busy;
 }
-function failure(e){status(messages[e.code]||messages.REQUEST_FAILED);$('status-box').focus();}
+function failure(e,context='deletion'){
+ const signInMessages={NETWORK_UNCONFIRMED:'Sign-in could not connect to Firebase or its response timed out. Reconnect and try again. This message does not establish the outcome of any earlier deletion request.',OFFLINE:'You are offline. Reconnect before signing in.',PROJECT_CONFIG:'Firebase rejected this website’s API configuration. Share the diagnostic below with support; do not change your account.',RESPONSE_UNREADABLE:'Sign-in received an unreadable server response. Try again.',PERMISSION_DENIED:'Firebase denied this sign-in request. Share the diagnostic below with support.',REQUEST_FAILED:'Sign-in could not be completed. Check the sign-in method and try again.',RATE_LIMITED:'Sign-in is temporarily rate limited. Wait before trying again.'};
+ const text=context==='signin' ? (signInMessages[e.code]||messages[e.code]||signInMessages.REQUEST_FAILED) : (messages[e.code]||messages.REQUEST_FAILED);
+ const operation=['provider-exchange','password-signin','account-check','auth-delete','authentication'].includes(e.operation)?e.operation:'';
+ const reason=['connection','timeout','response-format'].includes(e.diagnostic)?e.diagnostic:'';
+ const diagnostic=[operation,reason].filter(Boolean).join(' / ');
+ status(text+(diagnostic?' Diagnostic: '+diagnostic+'.':''));$('status-box').focus();
+}
 async function signIn(action){
  if(!enabled||busy||complete)return;
  busy=true;render();
  const expected=boundUid;
  try {await action(expected); const user=api.current(); if(expected&&user.uid!==expected)throw {code:'ACCOUNT_CHANGED'}; boundUid=user.uid; $('confirm').value='';$('understood').checked=false;status('Identity confirmed. Review the deletion scope and confirm below.');}
- catch(e){api.clear();failure(e);}
+ catch(e){api.clear();failure(e,'signin');}
  finally{$('password').value='';busy=false;render();}
 }
 $('signin').addEventListener('submit',event=>{event.preventDefault();const email=$('email').value.trim(),password=$('password').value;void signIn(expected=>api.email(email,password,expected));});

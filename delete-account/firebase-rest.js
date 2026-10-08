@@ -12,19 +12,26 @@ export class FirebaseRest {
   clear() { this.generation++; this.session=null; }
   async request(url, body, token, method='POST', allowMissing=false) {
     if (!this.online()) throw new FlowError('OFFLINE');
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),20000);
     let response;
-    try { response=await this.fetcher(url, {method, cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer', headers:{'Content-Type':'application/json', ...(token ? {Authorization:`Bearer ${token}`} : {})}, ...(body ? {body:JSON.stringify(body)} : {}), signal:AbortSignal.timeout(20000)}); }
-    catch { throw new FlowError('NETWORK_UNCONFIRMED'); }
+    try { response=await this.fetcher(url, {method, cache:'no-store', credentials:'omit', referrerPolicy:'origin', headers:{'Content-Type':'application/json', ...(token ? {Authorization:`Bearer ${token}`} : {})}, ...(body ? {body:JSON.stringify(body)} : {}), signal:controller.signal}); }
+    catch { const error=new FlowError('NETWORK_UNCONFIRMED'); error.diagnostic=controller.signal.aborted?'timeout':'connection'; throw error; }
+    finally { clearTimeout(timer); }
     if (allowMissing && response.status===404) return null;
-    const data=await response.json();
+    let data;
+    try { data=await response.json(); } catch { const error=new FlowError('RESPONSE_UNREADABLE'); error.diagnostic='response-format'; throw error; }
     if (!response.ok || data.error) {
-      const raw=`${data.error?.status || ''} ${data.error?.message || ''}`;
-      const code=/CREDENTIAL_TOO_OLD|TOKEN_EXPIRED|INVALID_ID_TOKEN/.test(raw) ? 'REAUTH_REQUIRED' : /PERMISSION_DENIED/.test(raw) ? 'PERMISSION_DENIED' : /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED/.test(raw) ? 'RATE_LIMITED' : /USER_NOT_FOUND|EMAIL_NOT_FOUND|INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|USER_DISABLED|FEDERATED_USER_ID_ALREADY_LINKED|EMAIL_EXISTS/.test(raw) ? 'SIGNIN_FAILED' : response.status===409 ? 'INTENT_RACE' : 'REQUEST_FAILED';
+      const raw=`${data.error?.status || ''} ${data.error?.message || ''} ${(data.error?.details||[]).map(d=>d.reason||'').join(' ')}`;
+      const code=/API_KEY_|API.key|referer|referrer/i.test(raw) ? 'PROJECT_CONFIG' : /CREDENTIAL_TOO_OLD|TOKEN_EXPIRED|INVALID_ID_TOKEN/.test(raw) ? 'REAUTH_REQUIRED' : /PERMISSION_DENIED/.test(raw) ? 'PERMISSION_DENIED' : /TOO_MANY_ATTEMPTS|QUOTA_EXCEEDED|RESOURCE_EXHAUSTED/.test(raw) ? 'RATE_LIMITED' : /USER_NOT_FOUND|EMAIL_NOT_FOUND|INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|USER_DISABLED|FEDERATED_USER_ID_ALREADY_LINKED|EMAIL_EXISTS/.test(raw) ? 'SIGNIN_FAILED' : response.status===409 ? 'INTENT_RACE' : 'REQUEST_FAILED';
       throw new FlowError(code);
     }
     return data;
   }
-  auth(method, body) { return this.request(`${this.authBase}/v1/accounts:${method}?key=${encodeURIComponent(this.config.apiKey)}`, body); }
+  async auth(method, body) {
+    try { return await this.request(`${this.authBase}/v1/accounts:${method}?key=${encodeURIComponent(this.config.apiKey)}`, body); }
+    catch(error) { error.operation=({signInWithIdp:'provider-exchange',signInWithPassword:'password-signin',lookup:'account-check',delete:'auth-delete'})[method]||'authentication'; throw error; }
+  }
   async accept(data, expectedUid, generation) {
     if (generation!==this.generation) throw new FlowError('ACCOUNT_CHANGED');
     if (!data.idToken || !data.localId || data.isNewUser || data.needConfirmation || (expectedUid && data.localId!==expectedUid)) throw new FlowError('ACCOUNT_CHANGED');
