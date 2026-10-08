@@ -4,7 +4,8 @@ const fields = obj => Object.fromEntries(Object.entries(obj).map(([k,v])=>[k,val
 const unpack = doc => doc?.fields && Object.fromEntries(Object.entries(doc.fields).map(([k,v])=>[k,v.stringValue ?? (v.integerValue !== undefined ? Number(v.integerValue) : v.booleanValue)]));
 export class FirebaseRest {
   constructor(config, { authBase = 'https://identitytoolkit.googleapis.com', firestoreBase = 'https://firestore.googleapis.com', fetcher = fetch } = {}) {
-    this.config=config; this.authBase=authBase; this.firestoreBase=firestoreBase; this.fetcher=fetcher;
+    this.config=config; this.authBase=authBase; this.firestoreBase=firestoreBase; // Native browser fetch requires its Window receiver; injected mocks hid this.
+    this.fetcher=fetcher.bind(globalThis);
     this.root=`projects/${config.projectId}/databases/(default)/documents`; this.session=null; this.generation=0;
   }
   current() { return this.session; }
